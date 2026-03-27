@@ -1,0 +1,7 @@
+packages:
+  - 'apps/*'
+
+pnpm:
+  onlyBuiltDependencies:
+    - '@nestjs/core'
+    - esbuild

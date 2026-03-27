@@ -1,0 +1,15 @@
+{
+  "name": "mdos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI原生不动产管理SaaS平台",
+  "scripts": {
+    "dev": "echo '📦 [MDOS] 开发环境启动于: ' && date '+%Y-%m-%d %H:%M:%S' && concurrently \"pnpm --filter api start:dev\" \"pnpm --filter web dev\"",
+    "dev:fast": "echo '🚀 [MDOS] 快速启动于: ' && date '+%Y-%m-%d %H:%M:%S' && (lsof -ti:3001 | xargs -r kill 2>/dev/null; concurrently \"cd apps/api && node dist/main.js\" \"pnpm --filter web dev\")",
+    "build": "pnpm --filter api build && pnpm --filter web build",
+    "install:all": "pnpm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
