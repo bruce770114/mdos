@@ -1,6 +1,10 @@
 # Windows Zone.Identifier alternate data streams (WSL artifact)
 *:Zone.Identifier
 
+# Claude Code / local dev tooling (not part of project source)
+.claude/
+.gstack/
+
 # Dependencies
 node_modules/
 .pnpm-store/
