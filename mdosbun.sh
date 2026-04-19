@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# MDOS 启动脚本
-# 用法: ./mdos.sh [start|stop|restart]
+# MDOS 启动脚本 (bun 版)
+# 用法: ./mdosbun.sh [start|start:fast|stop|restart]
 
 set -e
 
@@ -15,17 +15,13 @@ NC='\033[0m' # No Color
 # 项目根目录
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 服务状态检查函数
-check_port() {
-    local port=$1
-    if command -v nc &> /dev/null; then
-        nc -z localhost $port 2>/dev/null
-    elif command -v curl &> /dev/null; then
-        curl -s -o /dev/null http://localhost:$port
-    else
-        lsof -i :$port &> /dev/null
-    fi
-}
+# bun 路径
+BUN="${HOME}/.bun/bin/bun"
+if [ ! -x "$BUN" ]; then
+    echo -e "${RED}错误: 找不到 bun 可执行文件 ($BUN)${NC}"
+    echo -e "  请先安装 bun: curl -fsSL https://bun.sh/install | bash"
+    exit 1
+fi
 
 # 等待服务启动
 # 参数: $1=端口, $2=名称, $3=可选路径(默认/)
@@ -62,11 +58,9 @@ stop_service() {
     _code=$(curl --noproxy localhost,127.0.0.1 -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null) || true
     if [ "$_code" != "000" ] && [ -n "$_code" ]; then
         echo -e "  ${YELLOW}停止${NC} $name (端口 $port)..."
-        # 尝试优雅关闭
         pkill -f "vite.*$port" 2>/dev/null || true
         pkill -f "nest.*3001" 2>/dev/null || true
         sleep 1
-        # 强制杀死仍运行的进程
         fuser -k $port/tcp 2>/dev/null || true
     fi
 }
@@ -87,68 +81,65 @@ stop_docker() {
 }
 
 # 启动所有服务
-# 参数: $1 - 启动模式 (空=默认dev模式, fast=快速模式)
+# 参数: $1 - 启动模式 (dev=开发模式带热重载, fast=快速模式用已编译产物)
 do_start() {
     local mode=${1:-dev}
-    local api_cmd
-
-    if [ "$mode" = "fast" ]; then
-        api_cmd="node dist/main.js"
-    else
-        api_cmd="pnpm start:dev"
-    fi
 
     echo -e "\n${GREEN}========================================${NC}"
-    echo -e "${GREEN}  启动 MDOS 服务${NC}"
+    echo -e "${GREEN}  启动 MDOS 服务 (bun v$("$BUN" --version))${NC}"
     if [ "$mode" = "fast" ]; then
-        echo -e "${GREEN}  (快速模式: ~3秒启动后端)${NC}"
+        echo -e "${GREEN}  (快速模式: 直接运行 dist/main.js)${NC}"
     fi
     echo -e "${GREEN}========================================${NC}\n"
 
     # 启动 Docker
     start_docker
 
-    # 检查端口是否已被占用
+    # ── 后端 API (端口 3001) ──────────────────────────────────────
     local _api_code
     _api_code=$(curl --noproxy localhost,127.0.0.1 -s -o /dev/null -w "%{http_code}" http://localhost:3001/api/docs 2>/dev/null) || true
     if [ "$_api_code" != "000" ] && [ -n "$_api_code" ]; then
         echo -e "  ${YELLOW}后端 API 已在运行 (端口 3001)${NC}"
     else
-        if [ "$mode" != "fast" ]; then
+        if [ "$mode" = "fast" ]; then
+            echo -e "${BLUE}==>${NC} 启动后端 API — 快速模式 (端口 3001)..."
+            cd "$PROJECT_DIR/apps/api"
+            nohup "$BUN" run dist/main.js > "$PROJECT_DIR/logs/api.log" 2>&1 &
+        else
             echo -e "${BLUE}==>${NC} 构建后端 API..."
-            cd "$PROJECT_DIR"
-            pnpm --filter api build
+            cd "$PROJECT_DIR/apps/api"
+            "$BUN" run build
+            echo -e "${BLUE}==>${NC} 启动后端 API — 开发模式 (端口 3001)..."
+            nohup "$BUN" run start:dev > "$PROJECT_DIR/logs/api.log" 2>&1 &
         fi
-
-        echo -e "${BLUE}==>${NC} 启动后端 API (端口 3001)..."
-        cd "$PROJECT_DIR/apps/api"
-        nohup $api_cmd > "$PROJECT_DIR/logs/api.log" 2>&1 &
         echo $! > "$PROJECT_DIR/logs/api.pid"
     fi
 
+    # ── 租户前端 (端口 5173) ──────────────────────────────────────
     local _web_code
     _web_code=$(curl --noproxy localhost,127.0.0.1 -s -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null) || true
     if [ "$_web_code" != "000" ] && [ -n "$_web_code" ]; then
         echo -e "  ${YELLOW}租户前端已在运行 (端口 5173)${NC}"
     else
         echo -e "${BLUE}==>${NC} 启动租户前端 (端口 5173)..."
-        cd "$PROJECT_DIR"
-        nohup pnpm --filter web dev > "$PROJECT_DIR/logs/web.log" 2>&1 &
+        cd "$PROJECT_DIR/apps/web"
+        nohup "$BUN" run dev > "$PROJECT_DIR/logs/web.log" 2>&1 &
         echo $! > "$PROJECT_DIR/logs/web.pid"
     fi
 
+    # ── 平台管理前台 (端口 5175) ─────────────────────────────────
     local _platform_code
     _platform_code=$(curl --noproxy localhost,127.0.0.1 -s -o /dev/null -w "%{http_code}" http://localhost:5175 2>/dev/null) || true
     if [ "$_platform_code" != "000" ] && [ -n "$_platform_code" ]; then
         echo -e "  ${YELLOW}平台管理前台已在运行 (端口 5175)${NC}"
     else
         echo -e "${BLUE}==>${NC} 启动平台管理前台 (端口 5175)..."
-        cd "$PROJECT_DIR"
-        nohup pnpm --filter platform-web dev > "$PROJECT_DIR/logs/platform.log" 2>&1 &
+        cd "$PROJECT_DIR/apps/platform-web"
+        nohup "$BUN" run dev > "$PROJECT_DIR/logs/platform.log" 2>&1 &
         echo $! > "$PROJECT_DIR/logs/platform.pid"
     fi
 
-    # 等待服务启动
+    # 等待服务就绪
     echo ""
     wait_for_service 3001 "后端 API" "/api/docs"
     wait_for_service 5173 "租户前端"
@@ -177,27 +168,19 @@ do_stop() {
     echo -e "${YELLOW}  停止 MDOS 服务${NC}"
     echo -e "${YELLOW}========================================${NC}\n"
 
-    # 停止所有 Node 进程
     echo -e "${BLUE}==>${NC} 停止前端和后端进程..."
 
     # 使用 PID 文件停止进程
-    if [ -f "$PROJECT_DIR/logs/api.pid" ]; then
-        kill $(cat "$PROJECT_DIR/logs/api.pid") 2>/dev/null || true
-        rm -f "$PROJECT_DIR/logs/api.pid"
-    fi
-    if [ -f "$PROJECT_DIR/logs/web.pid" ]; then
-        kill $(cat "$PROJECT_DIR/logs/web.pid") 2>/dev/null || true
-        rm -f "$PROJECT_DIR/logs/web.pid"
-    fi
-    if [ -f "$PROJECT_DIR/logs/platform.pid" ]; then
-        kill $(cat "$PROJECT_DIR/logs/platform.pid") 2>/dev/null || true
-        rm -f "$PROJECT_DIR/logs/platform.pid"
-    fi
+    for pidfile in api web platform; do
+        local f="$PROJECT_DIR/logs/${pidfile}.pid"
+        if [ -f "$f" ]; then
+            kill "$(cat "$f")" 2>/dev/null || true
+            rm -f "$f"
+        fi
+    done
 
-    # 停止 vite 进程
+    # 兜底：杀掉 vite / nest 残留进程
     pkill -f "vite" 2>/dev/null || true
-
-    # 停止 nest 进程
     pkill -f "nest" 2>/dev/null || true
 
     # 停止 Docker
@@ -228,9 +211,11 @@ show_usage() {
     echo ""
     echo "命令:"
     echo "  start      - 启动所有 MDOS 服务 (开发模式, 带热重载)"
-    echo "  start:fast - 启动所有 MDOS 服务 (快速模式, 约3秒)"
+    echo "  start:fast - 启动所有 MDOS 服务 (快速模式, 直接运行 dist/)"
     echo "  stop       - 停止所有 MDOS 服务"
     echo "  restart    - 重启所有 MDOS 服务"
+    echo ""
+    echo "运行时: bun $("$BUN" --version 2>/dev/null || echo '未找到')"
     echo ""
 }
 
